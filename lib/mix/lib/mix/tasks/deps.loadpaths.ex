@@ -154,9 +154,13 @@ defmodule Mix.Tasks.Deps.Loadpaths do
   end
 
   defp reload_deps(deps) do
+    all_deps = Mix.Dep.load_and_cache()
+    available_apps = MapSet.new(all_deps, & &1.app)
+
     deps
     |> Enum.map(& &1.app)
-    |> Mix.Dep.filter_by_name(Mix.Dep.load_and_cache())
+    |> Enum.filter(&(&1 in available_apps))
+    |> Mix.Dep.filter_by_name(all_deps)
   end
 
   # Every local dependency (i.e. that are not fetchable)
