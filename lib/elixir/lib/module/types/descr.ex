@@ -4441,123 +4441,172 @@ defmodule Module.Types.Descr do
     end
   end
 
-  defp bdd_union(bdd1, bdd2) do
-    case {bdd1, bdd2} do
-      {:bdd_top, _bdd} ->
-        :bdd_top
+  defp bdd_union(bdd1, bdd2, cache \\ nil)
 
-      {_bdd, :bdd_top} ->
-        :bdd_top
+  defp bdd_union(bdd1, bdd2, nil) do
+    {result, _cache} = bdd_union(bdd1, bdd2, %{})
+    result
+  end
 
-      {:bdd_bot, bdd} ->
-        bdd
+  defp bdd_union(bdd1, bdd2, cache) when is_map(cache) do
+    cache_key = {:union, bdd1, bdd2}
 
-      {bdd, :bdd_bot} ->
-        bdd
+    case cache do
+      %{^cache_key => result} ->
+        {result, cache}
 
-      _ ->
-        case bdd_compare(bdd1, bdd2) do
-          {:lt, {lit1, c1, u1, d1}, bdd2} ->
-            {lit1, c1, bdd_union(u1, bdd2), d1}
+      %{} ->
+        {result, new_cache} =
+          case {bdd1, bdd2} do
+            {:bdd_top, _bdd} ->
+              {:bdd_top, cache}
 
-          {:gt, bdd1, {lit2, c2, u2, d2}} ->
-            {lit2, c2, bdd_union(bdd1, u2), d2}
+            {_bdd, :bdd_top} ->
+              {:bdd_top, cache}
 
-          {:eq, {lit, c1, u1, d1}, {_, c2, u2, d2}} ->
-            {lit, bdd_union(c1, c2), bdd_union(u1, u2), bdd_union(d1, d2)}
+            {:bdd_bot, bdd} ->
+              {bdd, cache}
 
-          {:eq, {lit, _, u1, d1}, _} ->
-            {lit, :bdd_top, u1, d1}
+            {bdd, :bdd_bot} ->
+              {bdd, cache}
 
-          {:eq, _, {lit, _, u2, d2}} ->
-            {lit, :bdd_top, u2, d2}
+            _ ->
+              case bdd_compare(bdd1, bdd2) do
+                {:lt, {lit1, c1, u1, d1}, bdd2} ->
+                  {u1_bdd2, cache} = bdd_union(u1, bdd2, cache)
+                  {{lit1, c1, u1_bdd2, d1}, cache}
 
-          {:eq, _, _} ->
-            bdd1
-        end
+                {:gt, bdd1, {lit2, c2, u2, d2}} ->
+                  {bdd1_u2, cache} = bdd_union(bdd1, u2, cache)
+                  {{lit2, c2, bdd1_u2, d2}, cache}
+
+                {:eq, {lit, c1, u1, d1}, {_, c2, u2, d2}} ->
+                  {c1_c2, cache} = bdd_union(c1, c2, cache)
+                  {u1_u2, cache} = bdd_union(u1, u2, cache)
+                  {d1_d2, cache} = bdd_union(d1, d2, cache)
+                  {{lit, c1_c2, u1_u2, d1_d2}, cache}
+
+                {:eq, {lit, _, u1, d1}, _} ->
+                  {{lit, :bdd_top, u1, d1}, cache}
+
+                {:eq, _, {lit, _, u2, d2}} ->
+                  {{lit, :bdd_top, u2, d2}, cache}
+
+                {:eq, _, _} ->
+                  {bdd1, cache}
+              end
+          end
+
+        {result, Map.put(new_cache, cache_key, result)}
     end
   end
 
-  defp bdd_difference(bdd1, bdd2) do
-    case {bdd1, bdd2} do
-      {_bdd, :bdd_top} ->
-        :bdd_bot
+  defp bdd_difference(bdd1, bdd2, cache \\ nil)
 
-      {:bdd_bot, _bdd} ->
-        :bdd_bot
+  defp bdd_difference(bdd1, bdd2, nil) do
+    {result, _cache} = bdd_difference(bdd1, bdd2, %{})
+    result
+  end
 
-      {bdd, :bdd_bot} ->
-        bdd
+  defp bdd_difference(bdd1, bdd2, cache) when is_map(cache) do
+    cache_key = {:difference, bdd1, bdd2}
 
-      {:bdd_top, bdd} ->
-        bdd_negation(bdd)
+    case cache do
+      %{^cache_key => result} ->
+        {result, cache}
 
-      _ ->
-        case bdd_compare(bdd1, bdd2) do
-          {:lt, {lit1, c1, u1, d1}, bdd2} ->
-            {lit1, bdd_difference(c1, bdd2), bdd_difference(u1, bdd2), bdd_difference(d1, bdd2)}
+      %{} ->
+        {result, new_cache} =
+          case {bdd1, bdd2} do
+            {_bdd, :bdd_top} ->
+              {:bdd_bot, cache}
 
-          {:gt, bdd1, {lit2, c2, u2, d2}} ->
-            {lit2, bdd_difference(bdd1, bdd_union(c2, u2)), :bdd_bot,
-             bdd_difference(bdd1, bdd_union(d2, u2))}
+            {:bdd_bot, _bdd} ->
+              {:bdd_bot, cache}
 
-          {:eq, {lit, c1, u1, d1}, {_, c2, u2, d2}} ->
-            cond do
-              c2 == :bdd_bot and d2 == :bdd_bot ->
-                {lit, bdd_difference(c1, u2), bdd_difference(u1, u2), bdd_difference(d1, u2)}
+            {bdd, :bdd_bot} ->
+              {bdd, cache}
 
-              u2 == :bdd_bot ->
-                cond do
-                  d2 == :bdd_bot ->
-                    {lit, bdd_difference(c1, c2), bdd_difference(u1, c2), bdd_union(u1, d1)}
+            {:bdd_top, bdd} ->
+              bdd_negation(bdd, cache)
 
-                  c2 == :bdd_bot ->
-                    {lit, bdd_union(u1, c1), bdd_difference(u1, d2), bdd_difference(c1, c2)}
+            _ ->
+              case bdd_compare(bdd1, bdd2) do
+                {:lt, {lit1, c1, u1, d1}, bdd2} ->
+                  {c1_bdd2, cache} = bdd_difference(c1, bdd2, cache)
+                  {u1_bdd2, cache} = bdd_difference(u1, bdd2, cache)
+                  {d1_bdd2, cache} = bdd_difference(d1, bdd2, cache)
+                  {{lit1, c1_bdd2, u1_bdd2, d1_bdd2}, cache}
 
-                  true ->
-                    # If d2 or c2 are bottom, we can remove one union.
-                    #
-                    # For example, if d2 is bottom, we have this BDD:
-                    #
-                    #   {l, (C1 or U1) and not C2, U1 and not C2, D1 or U1}
-                    #
-                    # Where the constrained part is:
-                    #
-                    #   (l and (C1 or U1) and not C2)
-                    #
-                    # Which expands to:
-                    #
-                    #   (l and C1 and not C2) or (l and U1 and not C2)
-                    #
-                    # Given (U1 and not C2) is already part of the uncertain/union,
-                    # we can skip (l and U1 and not C2), and we end up with:
-                    #
-                    #   {l, C1 and not C2, U1 and not C2, D1 or U1}
-                    #
-                    # Which are the formulas used above.
-                    {lit, bdd_difference(bdd_union(u1, c1), c2),
-                     bdd_difference(bdd_difference(u1, c2), d2),
-                     bdd_difference(bdd_union(u1, d1), d2)}
-                end
+                {:gt, bdd1, {lit2, c2, u2, d2}} ->
+                  {c2_u2, cache} = bdd_union(c2, u2, cache)
+                  {bdd1_c2u2, cache} = bdd_difference(bdd1, c2_u2, cache)
+                  {d2_u2, cache} = bdd_union(d2, u2, cache)
+                  {bdd1_d2u2, cache} = bdd_difference(bdd1, d2_u2, cache)
+                  {{lit2, bdd1_c2u2, :bdd_bot, bdd1_d2u2}, cache}
 
-              u1 == :bdd_bot or u1 == u2 ->
-                {lit, bdd_difference_union(c1, c2, u2), :bdd_bot,
-                 bdd_difference_union(d1, d2, u2)}
+                {:eq, {lit, c1, u1, d1}, {_, c2, u2, d2}} ->
+                  cond do
+                    c2 == :bdd_bot and d2 == :bdd_bot ->
+                      {c1_u2, cache} = bdd_difference(c1, u2, cache)
+                      {u1_u2, cache} = bdd_difference(u1, u2, cache)
+                      {d1_u2, cache} = bdd_difference(d1, u2, cache)
+                      {{lit, c1_u2, u1_u2, d1_u2}, cache}
 
-              true ->
-                {lit, bdd_difference(bdd_union(c1, u1), bdd_union(c2, u2)), :bdd_bot,
-                 bdd_difference(bdd_union(d1, u1), bdd_union(d2, u2))}
-            end
+                    u2 == :bdd_bot ->
+                      cond do
+                        d2 == :bdd_bot ->
+                          {c1_c2, cache} = bdd_difference(c1, c2, cache)
+                          {u1_c2, cache} = bdd_difference(u1, c2, cache)
+                          {u1_d1, cache} = bdd_union(u1, d1, cache)
+                          {{lit, c1_c2, u1_c2, u1_d1}, cache}
 
-          {:eq, _, {lit, c2, u2, _d2}} ->
-            {lit, bdd_negation(bdd_union(c2, u2)), :bdd_bot, :bdd_bot}
+                        c2 == :bdd_bot ->
+                          {u1_c1, cache} = bdd_union(u1, c1, cache)
+                          {u1_d2, cache} = bdd_difference(u1, d2, cache)
+                          {c1_c2, cache} = bdd_difference(c1, c2, cache)
+                          {{lit, u1_c1, u1_d2, c1_c2}, cache}
 
-          {:eq, {lit, _c1, u1, d1}, _} ->
-            {lit, :bdd_bot, :bdd_bot, bdd_union(d1, u1)}
+                        true ->
+                          {u1_c1, cache} = bdd_union(u1, c1, cache)
+                          {u1c1_c2, cache} = bdd_difference(u1_c1, c2, cache)
+                          {u1_c2, cache} = bdd_difference(u1, c2, cache)
+                          {u1c2_d2, cache} = bdd_difference(u1_c2, d2, cache)
+                          {u1_d1, cache} = bdd_union(u1, d1, cache)
+                          {u1d1_d2, cache} = bdd_difference(u1_d1, d2, cache)
+                          {{lit, u1c1_c2, u1c2_d2, u1d1_d2}, cache}
+                      end
 
-          {:eq, _, _} ->
-            :bdd_bot
-        end
+                    u1 == :bdd_bot or u1 == u2 ->
+                      {c1_diff, cache} = bdd_difference_union(c1, c2, u2, cache)
+                      {d1_diff, cache} = bdd_difference_union(d1, d2, u2, cache)
+                      {{lit, c1_diff, :bdd_bot, d1_diff}, cache}
+
+                    true ->
+                      {c1_u1, cache} = bdd_union(c1, u1, cache)
+                      {c2_u2, cache} = bdd_union(c2, u2, cache)
+                      {c_diff, cache} = bdd_difference(c1_u1, c2_u2, cache)
+                      {d1_u1, cache} = bdd_union(d1, u1, cache)
+                      {d2_u2, cache} = bdd_union(d2, u2, cache)
+                      {d_diff, cache} = bdd_difference(d1_u1, d2_u2, cache)
+                      {{lit, c_diff, :bdd_bot, d_diff}, cache}
+                  end
+
+                {:eq, _, {lit, c2, u2, _d2}} ->
+                  {c2_u2, cache} = bdd_union(c2, u2, cache)
+                  {neg, cache} = bdd_negation(c2_u2, cache)
+                  {{lit, neg, :bdd_bot, :bdd_bot}, cache}
+
+                {:eq, {lit, _c1, u1, d1}, _} ->
+                  {d1_u1, cache} = bdd_union(d1, u1, cache)
+                  {{lit, :bdd_bot, :bdd_bot, d1_u1}, cache}
+
+                {:eq, _, _} ->
+                  {:bdd_bot, cache}
+              end
+          end
+
+        {result, Map.put(new_cache, cache_key, result)}
     end
   end
 
@@ -4570,83 +4619,132 @@ defmodule Module.Types.Descr do
   end
 
   # Version of i \ (u1 v u2) that only computes the union if i is not bottom
-  defp bdd_difference_union(:bdd_bot, _u1, _u2),
-    do: :bdd_bot
+  defp bdd_difference_union(:bdd_bot, _u1, _u2, cache) when is_map(cache),
+    do: {:bdd_bot, cache}
 
-  defp bdd_difference_union(i, u1, u2),
-    do: bdd_difference(i, bdd_union(u1, u2))
+  defp bdd_difference_union(i, u1, u2, cache) when is_map(cache) do
+    {union, cache} = bdd_union(u1, u2, cache)
+    bdd_difference(i, union, cache)
+  end
 
-  defp bdd_intersection(bdd1, bdd2) do
-    case {bdd1, bdd2} do
-      {:bdd_top, bdd} ->
-        bdd
+  defp bdd_intersection(bdd1, bdd2, cache \\ nil)
 
-      {bdd, :bdd_top} ->
-        bdd
+  defp bdd_intersection(bdd1, bdd2, nil) do
+    {result, _cache} = bdd_intersection(bdd1, bdd2, %{})
+    result
+  end
 
-      {:bdd_bot, _bdd} ->
-        :bdd_bot
+  defp bdd_intersection(bdd1, bdd2, cache) when is_map(cache) do
+    cache_key = {:intersection, bdd1, bdd2}
 
-      {_, :bdd_bot} ->
-        :bdd_bot
+    case cache do
+      %{^cache_key => result} ->
+        {result, cache}
 
-      _ ->
-        case bdd_compare(bdd1, bdd2) do
-          {:lt, {lit1, c1, u1, d1}, bdd2} ->
-            {lit1, bdd_intersection(c1, bdd2), bdd_intersection(u1, bdd2),
-             bdd_intersection(d1, bdd2)}
+      %{} ->
+        {result, new_cache} =
+          case {bdd1, bdd2} do
+            {:bdd_top, bdd} ->
+              {bdd, cache}
 
-          {:gt, bdd1, {lit2, c2, u2, d2}} ->
-            {lit2, bdd_intersection(bdd1, c2), bdd_intersection(bdd1, u2),
-             bdd_intersection(bdd1, d2)}
+            {bdd, :bdd_top} ->
+              {bdd, cache}
 
-          # Notice that (l ? c1, u1, d1) and (l ? c2, u2, d2) is, on paper, equivalent to
-          # [(l and c1) or u1 or (not l and d1)] and [(l and c2) or u2 or (not l and d2)].
-          #
-          # which is equivalent, by distributivity of intersection over union, to
-          #
-          # l and [(c1 and c2) or (c1 and u2) or (u1 and c2)]
-          #      or (u1 and u2)
-          #      or [(not l) and ((d1 and u2) or (d1 and d2) or (u1 and d2))]
-          #
-          # which is equivalent, by factoring out c1 in the first disjunct, and d1 in the third, to
-          #
-          # l and [c1 and (c2 or u2)] or (u1 and c2)
-          #     or (u1 and u2)
-          #     or (not l) and [d1 and (u2 or d2) or (u1 and d2)]
-          #
-          # This last expression gives the following implementation:
-          {:eq, {lit, c1, u1, d1}, {_, c2, u2, d2}} ->
-            {lit, bdd_union(bdd_intersection_union(c1, c2, u2), bdd_intersection(u1, c2)),
-             bdd_intersection(u1, u2),
-             bdd_union(bdd_intersection_union(d1, u2, d2), bdd_intersection(u1, d2))}
+            {:bdd_bot, _bdd} ->
+              {:bdd_bot, cache}
 
-          {:eq, {lit, c1, u1, _}, _} ->
-            {lit, bdd_union(c1, u1), :bdd_bot, :bdd_bot}
+            {_, :bdd_bot} ->
+              {:bdd_bot, cache}
 
-          {:eq, _, {lit, c2, u2, _}} ->
-            {lit, bdd_union(c2, u2), :bdd_bot, :bdd_bot}
+            _ ->
+              case bdd_compare(bdd1, bdd2) do
+                {:lt, {lit1, c1, u1, d1}, bdd2} ->
+                  {c1_bdd2, cache} = bdd_intersection(c1, bdd2, cache)
+                  {u1_bdd2, cache} = bdd_intersection(u1, bdd2, cache)
+                  {d1_bdd2, cache} = bdd_intersection(d1, bdd2, cache)
+                  {{lit1, c1_bdd2, u1_bdd2, d1_bdd2}, cache}
 
-          {:eq, bdd, _} ->
-            bdd
-        end
+                {:gt, bdd1, {lit2, c2, u2, d2}} ->
+                  {bdd1_c2, cache} = bdd_intersection(bdd1, c2, cache)
+                  {bdd1_u2, cache} = bdd_intersection(bdd1, u2, cache)
+                  {bdd1_d2, cache} = bdd_intersection(bdd1, d2, cache)
+                  {{lit2, bdd1_c2, bdd1_u2, bdd1_d2}, cache}
+
+                # Notice that (l ? c1, u1, d1) and (l ? c2, u2, d2) is, on paper, equivalent to
+                # [(l and c1) or u1 or (not l and d1)] and [(l and c2) or u2 or (not l and d2)].
+                #
+                # which is equivalent, by distributivity of intersection over union, to
+                #
+                # l and [(c1 and c2) or (c1 and u2) or (u1 and c2)]
+                #      or (u1 and u2)
+                #      or [(not l) and ((d1 and u2) or (d1 and d2) or (u1 and d2))]
+                #
+                # which is equivalent, by factoring out c1 in the first disjunct, and d1 in the third, to
+                #
+                # l and [c1 and (c2 or u2)] or (u1 and c2)
+                #     or (u1 and u2)
+                #     or (not l) and [d1 and (u2 or d2) or (u1 and d2)]
+                #
+                # This last expression gives the following implementation:
+                {:eq, {lit, c1, u1, d1}, {_, c2, u2, d2}} ->
+                  {c1_int, cache} = bdd_intersection_union(c1, c2, u2, cache)
+                  {u1_c2, cache} = bdd_intersection(u1, c2, cache)
+                  {c_part, cache} = bdd_union(c1_int, u1_c2, cache)
+                  {u1_u2, cache} = bdd_intersection(u1, u2, cache)
+                  {d1_int, cache} = bdd_intersection_union(d1, u2, d2, cache)
+                  {u1_d2, cache} = bdd_intersection(u1, d2, cache)
+                  {d_part, cache} = bdd_union(d1_int, u1_d2, cache)
+                  {{lit, c_part, u1_u2, d_part}, cache}
+
+                {:eq, {lit, c1, u1, _}, _} ->
+                  {c1_u1, cache} = bdd_union(c1, u1, cache)
+                  {{lit, c1_u1, :bdd_bot, :bdd_bot}, cache}
+
+                {:eq, _, {lit, c2, u2, _}} ->
+                  {c2_u2, cache} = bdd_union(c2, u2, cache)
+                  {{lit, c2_u2, :bdd_bot, :bdd_bot}, cache}
+
+                {:eq, bdd, _} ->
+                  {bdd, cache}
+              end
+          end
+
+        {result, Map.put(new_cache, cache_key, result)}
     end
   end
 
   # Version of i ^ (u1 v u2) that only computes the union if i is not bottom
-  defp bdd_intersection_union(:bdd_bot, _u1, _u2),
-    do: :bdd_bot
+  defp bdd_intersection_union(:bdd_bot, _u1, _u2, cache) when is_map(cache),
+    do: {:bdd_bot, cache}
 
-  defp bdd_intersection_union(i, u1, u2),
-    do: bdd_intersection(i, bdd_union(u1, u2))
+  defp bdd_intersection_union(i, u1, u2, cache) when is_map(cache) do
+    {union, cache} = bdd_union(u1, u2, cache)
+    bdd_intersection(i, union, cache)
+  end
 
   # Lazy negation: eliminate the union, then perform normal negation (switching leaves)
-  defp bdd_negation(:bdd_top), do: :bdd_bot
-  defp bdd_negation(:bdd_bot), do: :bdd_top
-  defp bdd_negation({_, _} = pair), do: {pair, :bdd_bot, :bdd_bot, :bdd_top}
+  defp bdd_negation(bdd, cache \\ nil)
 
-  defp bdd_negation({lit, c, u, d}) do
+  defp bdd_negation(:bdd_top, nil), do: :bdd_bot
+  defp bdd_negation(:bdd_bot, nil), do: :bdd_top
+  defp bdd_negation({_, _} = pair, nil), do: {pair, :bdd_bot, :bdd_bot, :bdd_top}
+
+  defp bdd_negation({lit, c, u, d}, nil) do
     {lit, bdd_negation(bdd_union(c, u)), :bdd_bot, bdd_negation(bdd_union(d, u))}
+  end
+
+  defp bdd_negation(:bdd_top, cache) when is_map(cache), do: {:bdd_bot, cache}
+  defp bdd_negation(:bdd_bot, cache) when is_map(cache), do: {:bdd_top, cache}
+
+  defp bdd_negation({_, _} = pair, cache) when is_map(cache),
+    do: {{pair, :bdd_bot, :bdd_bot, :bdd_top}, cache}
+
+  defp bdd_negation({lit, c, u, d}, cache) when is_map(cache) do
+    {c_u, cache} = bdd_union(c, u, cache)
+    {c_neg, cache} = bdd_negation(c_u, cache)
+    {d_u, cache} = bdd_union(d, u, cache)
+    {d_neg, cache} = bdd_negation(d_u, cache)
+    {{lit, c_neg, :bdd_bot, d_neg}, cache}
   end
 
   defp bdd_to_dnf(bdd), do: bdd_to_dnf([], [], [], bdd)
